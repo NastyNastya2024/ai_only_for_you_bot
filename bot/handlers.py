@@ -1,16 +1,21 @@
+# handlers.py
+
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from utils import log_user_activity
-from models.inference_gpu import generate_video, generate_image  # Импортируем функции генерации видео и изображений
-from worker import send_task_to_worker  # Импорт отправки задачи в очередь RabbitMQ
+from utils import log_user_activity, generate_video  # Импортируем утилиты
+from worker import send_task_to_worker  # Функция для отправки задачи в очередь RabbitMQ
+
+# Состояние для хранения изображения и выбранной модели
+user_state = {}
 
 async def start(message: types.Message):
     """
     Обработка команды /start
     """
     await message.answer(
-        "Привет! Я могу генерировать видео из изображений или работать с различными моделями генерации изображений. "
-        "Выбери одну из опций ниже:",
+        "Привет! Я могу генерировать видео из изображений. Загрузите изображение, "
+        "и затем выберите модель для генерации видео по этому изображению. "
+        "Нажмите одну из кнопок ниже, чтобы выбрать модель:",
         reply_markup=main_keyboard()
     )
 
@@ -19,8 +24,8 @@ async def help_command(message: types.Message):
     Обработка команды /help
     """
     await message.answer(
-        "Ты можешь выбрать одну из моделей для генерации изображений или отправить изображение для создания видео. "
-        "Просто нажми кнопку или отправь изображение!"
+        "Ты можешь отправить мне изображение, а затем выбрать одну из моделей для генерации видео. "
+        "Просто загрузите картинку и выбери модель!"
     )
 
 async def button_handler(callback: types.CallbackQuery):
@@ -32,27 +37,33 @@ async def button_handler(callback: types.CallbackQuery):
     # Логирование действия пользователя
     log_user_activity(callback.from_user.id, model_name)
 
-    # В зависимости от выбора модели выполняем соответствующую задачу
-    if model_name.startswith("model_"):
-        # Отправка задания на обработку изображения
-        await send_task_to_worker(model_name, callback.from_user.id)
-        await callback.answer(f"Запрос на {model_name} отправлен!")
-    elif model_name == "generate_video":
-        # Генерация видео из изображения
-        await callback.answer("Пожалуйста, отправь изображение для создания видео.")
-        await callback.bot.register_message_handler(generate_video_from_image, content_types=["photo"])
+    # Сохраняем выбранную модель для пользователя
+    user_state[callback.from_user.id] = {'model': model_name}
+    
+    # Уведомление пользователя
+    await callback.answer(f"Модель {model_name} выбрана. Теперь отправьте мне изображение.")
 
-async def generate_video_from_image(message: types.Message):
+async def process_image(message: types.Message):
     """
-    Обработка отправленного изображения и генерация видео
+    Обработка изображения, отправленного пользователем, и генерация видео
     """
     try:
         # Получаем изображение от пользователя
         image = await message.photo[-1].download()
 
-        # Генерируем видео
-        video_path = generate_video(image)
-        await message.answer_video(video_path, caption="Вот ваше видео!")
+        # Проверка, выбрал ли пользователь модель
+        if message.from_user.id not in user_state or 'model' not in user_state[message.from_user.id]:
+            await message.answer("Сначала выберите модель для генерации видео.")
+            return
+
+        model_name = user_state[message.from_user.id]['model']
+        
+        # Генерация видео по выбранной модели через утилиту
+        video_path = await generate_video(image, model_name)
+
+        # Отправляем сгенерированное видео пользователю
+        await message.answer_video(video_path, caption=f"Вот ваше видео, сгенерированное с помощью {model_name}!")
+
     except Exception as e:
         await message.answer(f"Произошла ошибка при генерации видео: {str(e)}")
 
@@ -62,12 +73,12 @@ def main_keyboard():
     """
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("Генерация изображений", callback_data="generate_image"),
-        InlineKeyboardButton("Генерация видео", callback_data="generate_video"),
-        InlineKeyboardButton("Модель 1", callback_data="model_1"),
-        InlineKeyboardButton("Модель 2", callback_data="model_2"),
-        InlineKeyboardButton("Модель 3", callback_data="model_3"),
-        InlineKeyboardButton("Модель 4", callback_data="model_4"),
+        InlineKeyboardButton("Stable Video Diffusion", callback_data="StableVideoDiffusion"),
+        InlineKeyboardButton("I2VGen-XL", callback_data="I2VGenXL"),
+        InlineKeyboardButton("Video Crafter 1", callback_data="VideoCrafter1"),
+        InlineKeyboardButton("Cog Video X", callback_data="CogVideoX"),
+        InlineKeyboardButton("Animate Diff", callback_data="AnimateDiff"),
+        InlineKeyboardButton("Impact Frames", callback_data="impactframes"),
     )
     return keyboard
 
@@ -77,5 +88,7 @@ def set_handlers(dp):
     """
     dp.register_message_handler(start, commands=["start"])
     dp.register_message_handler(help_command, commands=["help"])
-    dp.register_callback_query_handler(button_handler, lambda c: c.data.startswith("model_"))
-    dp.register_callback_query_handler(button_handler, lambda c: c.data == "generate_video")
+    dp.register_callback_query_handler(button_handler, lambda c: c.data in [
+        "StableVideoDiffusion", "I2VGenXL", "VideoCrafter1", "CogVideoX", "AnimateDiff", "impactframes"
+    ])
+    dp.register_message_handler(process_image, content_types=["photo"])

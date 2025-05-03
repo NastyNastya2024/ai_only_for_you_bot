@@ -1,33 +1,49 @@
+# main.py
+
 import logging
+import os
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from handlers import set_handlers
-import os
-import asyncio
+from aiogram import F
+from handlers import set_handlers  # Подключаем обработчики
 
-API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
-dp.middleware.setup(LoggingMiddleware())
-
+# Создаем экземпляр FastAPI
 app = FastAPI()
 
-# Устанавливаем хендлеры
-set_handlers(dp)
+# Токен вашего бота
+API_TOKEN = os.getenv('BOT_API_TOKEN')
 
-@app.post("/webhook")
-async def handle_webhook(request: Request):
-    """
-    Обрабатывает запросы через вебхук, поступающие от Telegram.
-    """
-    json_data = await request.json()
-    update = types.Update(**json_data)
+# Создаем экземпляры бота и диспетчера
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
 
-    # Для того, чтобы все было асинхронно, используем asyncio.create_task,
-    # чтобы обработка обновлений Telegram не блокировала остальной код
-    asyncio.create_task(dp.process_update(update))
+# Настроим обработчики
+set_handlers(dp)  # Подключаем обработчики команд и событий бота
+
+@app.post("/webhook/")
+async def webhook(request: Request):
+    """Обрабатываем вебхуки, отправляемые на /webhook."""
+    payload = await request.json()
     
-    return JSONResponse(status_code=200, content={"message": "OK"})
+    # Обработаем входящие обновления
+    update = types.Update(**payload)
+    await dp.process_update(update)
+    
+    return JSONResponse(content={"status": "ok"})
+
+# Новый способ запуска бота через polling или webhook
+async def on_start():
+    # Запускаем polling
+    await dp.start_polling()
+
+# Если нужно использовать webhook, нужно будет настроить FastAPI на прием вебхуков
+if __name__ == '__main__':
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(on_start())
+
+
